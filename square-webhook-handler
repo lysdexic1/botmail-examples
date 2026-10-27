@@ -1,0 +1,125 @@
+# botmail-square-webhook-handler
+
+A Botmail worker template for handling Square webhook events, specifically for subscription management and payment verification.
+
+## Overview
+
+This Worker template demonstrates how to process Square webhook events (`payment.updated`, `invoice.payment_made`, `subscription.updated`) and update workspace subscriptions accordingly.
+
+## Setup
+
+1. Create a Cloudflare Worker:
+   ```bash
+   npx wrangler init botmail-square-webhook --template=empty
+   ```
+
+2. Add dependencies:
+   ```bash
+   pnpm add @botmail/mcp-sdk
+   ```
+
+3. Configure environment variables in `wrangler.toml`:
+   ```toml
+   [env.production]
+   VARIABLES = {
+     BOTMAIL_API_URL = "https://api.botmail.work",
+     SQUARE_ACCESS_TOKEN = "your_square_access_token",
+     SQUARE_WEBHOOK_VERIFICATION_KEY = "your_webhook_verification_key",
+   }
+   ```
+
+## Webhook Event Types
+
+The worker handles the following Square webhook events:
+
+### `payment.updated`
+- Triggered when a payment status changes
+- Updates workspace subscription status
+- Generates tax invoice if payment completed
+
+### `invoice.payment_made`
+- Triggered when an invoice is paid
+- Sends confirmation email to customer
+- Updates workspace subscription if needed
+
+### `subscription.updated`
+- Triggered when subscription status changes
+- Updates workspace tier and status
+- Handles cancellation or reactivation
+
+## Example Implementation
+
+```js
+export default {
+  async fetch(request, env, ctx) {
+    // Verify webhook signature
+    const signature = request.headers.get('Square-Signature');
+    if (!verifySquareSignature(request, signature)) {
+      return new Response('Unauthorized', { status: 401 });
+    }
+
+    const body = await request.json();
+    const eventType = body.event;
+
+    switch (eventType) {
+      case 'payment.updated':
+        await handlePaymentUpdated(body.data);
+        break;
+      case 'invoice.payment_made':
+        await handleInvoicePaid(body.data);
+        break;
+      case 'subscription.updated':
+        await handleSubscriptionUpdated(body.data);
+        break;
+      default:
+        // Ignore unknown events
+    }
+
+    return new Response('ok', { status: 200 });
+  },
+};
+```
+
+## Helper Functions
+
+### Verify Square Signature
+
+```js
+function verifySquareSignature(request, signature) {
+  if (!signature) return false;
+  
+  const body = await request.text();
+  const hmac = crypto.createHmac('sha256', env.SQUARE_WEBHOOK_VERIFICATION_KEY);
+  const expected = 'v1=' + hmac.update(body).digest('hex');
+  
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected)
+  );
+}
+```
+
+### Handle Payment Updated
+
+```js
+async function handlePaymentUpdated(payment) {
+  const { id, amount, status, } = payment;
+  
+  if (status !== 'COMPLETED') return;
+  
+  // Find or create workspace based on Square customer
+  const workspace = await findWorkspaceBySquareCustomer(payment.customer_id);
+  
+  if (!workspace) return;
+  
+  // Update subscription status
+  await env.DB.prepare(
+    'UPDATE workspaces SET subscription_status = ?, updated_at = ? WHERE id = ?'
+  )
+  .bind('active', new Date().toISOString(), workspace.id)
+  .run();
+  
+  // Generate tax invoice
+  await generateTaxInvoice(workspace.id, payment.id, amount);
+}
+```
