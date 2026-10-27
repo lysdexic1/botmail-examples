@@ -87,11 +87,11 @@ export default {
 ```js
 function verifySquareSignature(request, signature) {
   if (!signature) return false;
-  
+
   const body = await request.text();
   const hmac = crypto.createHmac('sha256', env.SQUARE_WEBHOOK_VERIFICATION_KEY);
   const expected = 'v1=' + hmac.update(body).digest('hex');
-  
+
   return crypto.timingSafeEqual(
     Buffer.from(signature),
     Buffer.from(expected)
@@ -104,21 +104,21 @@ function verifySquareSignature(request, signature) {
 ```js
 async function handlePaymentUpdated(payment) {
   const { id, amount, status, } = payment;
-  
+
   if (status !== 'COMPLETED') return;
-  
+
   // Find or create workspace based on Square customer
   const workspace = await findWorkspaceBySquareCustomer(payment.customer_id);
-  
+
   if (!workspace) return;
-  
+
   // Update subscription status
   await env.DB.prepare(
     'UPDATE workspaces SET subscription_status = ?, updated_at = ? WHERE id = ?'
   )
   .bind('active', new Date().toISOString(), workspace.id)
   .run();
-  
+
   // Generate tax invoice
   await generateTaxInvoice(workspace.id, payment.id, amount);
 }
